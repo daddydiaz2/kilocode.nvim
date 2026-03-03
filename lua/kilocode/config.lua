@@ -22,8 +22,9 @@ vim.g.kilocode_opts = vim.g.kilocode_opts
 ---Options for `select()`.
 ---@field select? kilocode.select.Opts
 ---
----Options for the terminal window.
----@field terminal? kilocode.terminal.Opts
+---Window configuration.
+---@field split? "vsplit"|"split" Split direction (vsplit = right, split = bottom)
+---@field autoscroll? boolean Auto-scroll to bottom
 
 ---@class kilocode.Prompt
 ---@field prompt string The prompt to send to KiloCode.
@@ -33,13 +34,6 @@ vim.g.kilocode_opts = vim.g.kilocode_opts
 ---@field cmd? string Command to run KiloCode CLI (default: "kilo")
 ---@field args? string[] Additional arguments
 ---@field env? table<string, string> Environment variables
-
----@class kilocode.terminal.Opts
----@field position? "right"|"left"|"bottom"|"top" Window position
----@field width? number Window width (for left/right)
----@field height? number Window height (for top/bottom)
----@field border? "none"|"single"|"double"|"rounded"|"solid"|"shadow" Border style
----@field autoscroll? boolean Auto-scroll to bottom
 
 ---@class kilocode.ask.Opts
 ---@field prompt? string Input prompt text
@@ -55,13 +49,9 @@ local defaults = {
     args = {},
     env = {},
   },
-  terminal = {
-    position = "right",
-    width = 80,
-    height = 20,
-    border = "rounded",
-    autoscroll = true,
-  },
+  -- Modo opencode.nvim: split al costado
+  split = "vsplit",  -- "vsplit" = derecha, "split" = abajo
+  autoscroll = true,
   -- stylua: ignore
   contexts = {
     ["@this"] = function(ctx) return ctx:this() end,

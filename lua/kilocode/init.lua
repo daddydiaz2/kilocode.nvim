@@ -1,4 +1,4 @@
----KiloCode.nvim - Integración de KiloCode CLI con Neovim
+---KiloCode.nvim - Integración de KiloCode CLI con Neovim (modo opencode-style)
 ---@author Daniel Diaz <daddydiaz2@gmail.com>
 ---@license MIT
 
@@ -9,10 +9,8 @@ local config = require("kilocode.config")
 
 -- Estado del plugin
 M.state = {
-  terminal_buf = nil,
-  terminal_win = nil,
-  input_buf = nil,
-  input_win = nil,
+  buf = nil,
+  win = nil,
   job_id = nil,
   session_active = false,
   history = {},
@@ -29,12 +27,9 @@ end
 
 function Context:this()
   local mode = vim.fn.mode()
-  -- Check for visual mode (v, V, or Ctrl-V/block)
-  -- Note: In Neovim, Ctrl-V in visual mode returns byte value 22
   if mode == "v" or mode == "V" or mode == "\22" then
     local start_line = vim.fn.line("v")
     local end_line = vim.fn.line(".")
-    -- Ensure valid line range
     if start_line > end_line then
       start_line, end_line = end_line, start_line
     end
@@ -54,7 +49,6 @@ end
 function Context:selection()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
-  -- Validate that we have a valid selection
   if start_line == 0 or end_line == 0 or start_line > end_line then
     return ""
   end
@@ -91,7 +85,7 @@ function Context:diagnostics()
   return table.concat(lines, "\n")
 end
 
--- Reemplazar contextos en un prompt
+-- Reemplazar contextos
 function M.replace_contexts(prompt)
   local ctx = Context:new()
   local result = prompt
@@ -100,7 +94,6 @@ function M.replace_contexts(prompt)
     if result:match(vim.pesc(placeholder)) then
       local ok, value = pcall(fn, ctx)
       if ok and value then
-        -- Use function replacement to handle special characters in value
         result = result:gsub(vim.pesc(placeholder), function() return value end)
       end
     end
@@ -109,310 +102,144 @@ function M.replace_contexts(prompt)
   return result
 end
 
--- Calcular dimensiones de ventana
-local function calc_dimensions()
-  local opts = config.opts.terminal
-  local win_width = vim.o.columns
-  local win_height = vim.o.lines
-  local row, col, width, height
-
-  if opts.position == "right" then
-    row = 0
-    col = win_width - opts.width
-    width = opts.width
-    height = win_height - 4
-  elseif opts.position == "left" then
-    row = 0
-    col = 0
-    width = opts.width
-    height = win_height - 4
-  elseif opts.position == "bottom" then
-    row = win_height - opts.height - 4
-    col = 0
-    width = win_width
-    height = opts.height
-  elseif opts.position == "top" then
-    row = 0
-    col = 0
-    width = win_width
-    height = opts.height
-  else
-    -- Default to right
-    row = 0
-    col = win_width - 80
-    width = 80
-    height = win_height - 4
-  end
-
-  return row, col, width, height
-end
-
--- Crear ventana de terminal
-function M.create_terminal_window()
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    vim.api.nvim_set_current_win(M.state.terminal_win)
+-- Abrir KiloCode en split (como opencode.nvim)
+function M.open()
+  if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+    vim.api.nvim_set_current_win(M.state.win)
     return
   end
 
-  local row, col, width, height = calc_dimensions()
-  local opts = config.opts.terminal
-
-  -- Crear buffer
-  M.state.terminal_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(M.state.terminal_buf, "KiloCode")
-
-  -- Opciones de ventana
-  local win_opts = {
-    relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = opts.border,
-    title = " 󱐋 KiloCode ",
-    title_pos = "center",
-  }
-
-  -- Crear ventana
-  M.state.terminal_win = vim.api.nvim_open_win(M.state.terminal_buf, true, win_opts)
-
+  local split_cmd = config.opts.split or "vsplit"
+  vim.cmd(split_cmd)
+  
+  M.state.win = vim.api.nvim_get_current_win()
+  
+  -- Crear o reutilizar buffer
+  if not M.state.buf or not vim.api.nvim_buf_is_valid(M.state.buf) then
+    M.state.buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(M.state.buf, "KiloCode")
+  end
+  
+  vim.api.nvim_win_set_buf(M.state.win, M.state.buf)
+  
   -- Configurar terminal
   local cmd = config.opts.server.cmd
   local args = config.opts.server.args or {}
-  local full_cmd = cmd
   if #args > 0 then
-    full_cmd = full_cmd .. " " .. table.concat(args, " ")
+    cmd = cmd .. " " .. table.concat(args, " ")
   end
-
-  vim.fn.termopen(full_cmd, {
+  
+  vim.fn.termopen(cmd, {
     env = config.opts.server.env,
     on_exit = function()
       M.state.session_active = false
     end,
   })
-
-  M.state.job_id = vim.bo[M.state.terminal_buf].channel
+  
+  M.state.job_id = vim.bo[M.state.buf].channel
   M.state.session_active = true
-
+  
   -- Configurar buffer
-  vim.bo[M.state.terminal_buf].modifiable = false
-  vim.bo[M.state.terminal_buf].filetype = "kilocode"
-
-  -- Keymaps
-  local buf_opts = { buffer = M.state.terminal_buf, noremap = true, silent = true }
+  vim.bo[M.state.buf].modifiable = false
+  vim.bo[M.state.buf].filetype = "kilocode"
+  
+  -- Keymaps específicas del buffer
+  local buf_opts = { buffer = M.state.buf, noremap = true, silent = true }
   vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", buf_opts)
-  vim.keymap.set("t", "<C-q>", function() M.close() end, buf_opts)
   vim.keymap.set("n", "q", function() M.close() end, buf_opts)
   vim.keymap.set("n", "<C-c>", function() M.close() end, buf_opts)
-
+  
   -- Auto-scroll
-  if opts.autoscroll then
-    local group = vim.api.nvim_create_augroup("KiloCodeTerminal", { clear = true })
+  if config.opts.autoscroll ~= false then
+    local group = vim.api.nvim_create_augroup("KiloCodeScroll", { clear = true })
     vim.api.nvim_create_autocmd("TextChanged", {
       group = group,
-      buffer = M.state.terminal_buf,
+      buffer = M.state.buf,
       callback = function()
-        if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-          local line_count = vim.api.nvim_buf_line_count(M.state.terminal_buf)
+        if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+          local line_count = vim.api.nvim_buf_line_count(M.state.buf)
           pcall(function()
-            vim.api.nvim_win_set_cursor(M.state.terminal_win, { line_count, 0 })
+            vim.api.nvim_win_set_cursor(M.state.win, { line_count, 0 })
           end)
         end
       end,
-      desc = "Auto-scroll KiloCode terminal",
     })
   end
-
-  vim.cmd("startinsert")
-end
-
--- Crear ventana de input
-function M.create_input_window()
-  if not M.state.terminal_win or not vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    M.create_terminal_window()
-    return
-  end
-
-  if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
-    vim.api.nvim_set_current_win(M.state.input_win)
-    vim.cmd("startinsert")
-    return
-  end
-
-  -- Calcular posición debajo de la terminal
-  local term_pos = vim.api.nvim_win_get_position(M.state.terminal_win)
-  local term_width = vim.api.nvim_win_get_width(M.state.terminal_win)
-  local term_height = vim.api.nvim_win_get_height(M.state.terminal_win)
-
-  -- Crear buffer
-  M.state.input_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(M.state.input_buf, "KiloCode Input")
-  vim.bo[M.state.input_buf].buftype = "prompt"
-  vim.bo[M.state.input_buf].filetype = "kilocode-input"
-
-  -- Configurar prompt
-  vim.fn.prompt_setprompt(M.state.input_buf, " ")
-
-  -- Opciones de ventana
-  local win_opts = {
-    relative = "editor",
-    row = term_pos[1] + term_height + 1,
-    col = term_pos[2],
-    width = term_width,
-    height = 3,
-    style = "minimal",
-    border = "rounded",
-    title = " Prompt ",
-    title_pos = "center",
-  }
-
-  M.state.input_win = vim.api.nvim_open_win(M.state.input_buf, true, win_opts)
-
-  -- Callback de prompt
-  vim.fn.prompt_setcallback(M.state.input_buf, function(text)
-    local ok, err = pcall(function()
-      if text and text:gsub("%s", "") ~= "" then
-        table.insert(M.state.history, text)
-        M.state.history_index = #M.state.history + 1
-        M.send(text)
-      end
-      -- Limpiar input
-      if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
-        vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, {})
-      end
-    end)
-    if not ok then
-      vim.notify("Error en callback: " .. tostring(err), vim.log.levels.ERROR)
-    end
-  end)
-
-  -- Keymaps
-  local buf_opts = { buffer = M.state.input_buf, noremap = true, silent = true }
   
-  vim.keymap.set({ "i", "n" }, "<Esc>", function()
-    M.close_input()
-    if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-      vim.api.nvim_set_current_win(M.state.terminal_win)
-    end
-  end, buf_opts)
-
-  vim.keymap.set("i", "<Tab>", function()
-    vim.api.nvim_set_current_win(M.state.terminal_win)
-    vim.cmd("startinsert")
-  end, buf_opts)
-
-  -- Historial
-  vim.keymap.set("i", "<Up>", function()
-    if M.state.history_index > 1 then
-      M.state.history_index = M.state.history_index - 1
-      local text = M.state.history[M.state.history_index] or ""
-      vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { text })
-      vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #text })
-    end
-  end, buf_opts)
-
-  vim.keymap.set("i", "<Down>", function()
-    if M.state.history_index < #M.state.history then
-      M.state.history_index = M.state.history_index + 1
-      local text = M.state.history[M.state.history_index] or ""
-      vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { text })
-      vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #text })
-    else
-      M.state.history_index = #M.state.history + 1
-      vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, {})
-    end
-  end, buf_opts)
-
   vim.cmd("startinsert")
 end
 
--- Enviar mensaje a KiloCode
-function M.send(text)
-  if not M.state.terminal_buf or not vim.api.nvim_buf_is_valid(M.state.terminal_buf) then
-    vim.notify("KiloCode no está activo", vim.log.levels.ERROR)
-    return
-  end
-
-  -- Validar job_id
-  if not M.state.job_id or M.state.job_id == 0 then
-    vim.notify("Terminal de KiloCode no está lista", vim.log.levels.ERROR)
-    return
-  end
-
-  -- Procesar contextos
-  local processed = M.replace_contexts(text)
-
-  -- Enviar a terminal
-  local ok, err = pcall(vim.fn.chansend, M.state.job_id, processed .. "\n")
-  if not ok then
-    vim.notify("Error al enviar mensaje: " .. tostring(err), vim.log.levels.ERROR)
-    return
-  end
-
-  -- Volver a terminal
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    vim.api.nvim_set_current_win(M.state.terminal_win)
-    vim.cmd("startinsert")
-  end
-end
-
--- Cerrar input
-function M.close_input()
-  if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
-    vim.api.nvim_win_close(M.state.input_win, true)
-    M.state.input_win = nil
-    M.state.input_buf = nil
-  end
-end
-
--- Cerrar todo
+-- Cerrar KiloCode
 function M.close()
-  M.close_input()
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    vim.api.nvim_win_close(M.state.terminal_win, true)
+  if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+    vim.api.nvim_win_close(M.state.win, true)
   end
-  M.state.terminal_win = nil
-  M.state.terminal_buf = nil
+  M.state.win = nil
   M.state.job_id = nil
   M.state.session_active = false
 end
 
--- Toggle
+-- Toggle (abrir/cerrar)
 function M.toggle()
-  if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
+  if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
     M.close()
   else
-    M.create_terminal_window()
+    M.open()
   end
 end
 
--- Ask
+-- Enviar mensaje a KiloCode
+function M.send(text)
+  if not M.state.buf or not vim.api.nvim_buf_is_valid(M.state.buf) then
+    vim.notify("KiloCode no está abierto. Usa :Kilo o <C-.> para abrirlo", vim.log.levels.WARN)
+    return
+  end
+  
+  if not M.state.job_id or M.state.job_id == 0 then
+    vim.notify("Terminal de KiloCode no está lista", vim.log.levels.ERROR)
+    return
+  end
+  
+  local processed = M.replace_contexts(text)
+  
+  local ok, err = pcall(vim.fn.chansend, M.state.job_id, processed .. "\n")
+  if not ok then
+    vim.notify("Error al enviar: " .. tostring(err), vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Volver a la ventana de KiloCode
+  if M.state.win and vim.api.nvim_win_is_valid(M.state.win) then
+    vim.api.nvim_set_current_win(M.state.win)
+    vim.cmd("startinsert")
+  end
+end
+
+-- Ask - abrir input y enviar
 function M.ask(prompt, opts)
   opts = opts or {}
   prompt = prompt or ""
-
-  if not M.state.terminal_win or not vim.api.nvim_win_is_valid(M.state.terminal_win) then
-    M.create_terminal_window()
+  
+  if not M.state.win or not vim.api.nvim_win_is_valid(M.state.win) then
+    M.open()
   end
-
+  
   if opts.submit and prompt ~= "" then
-    M.send(prompt)
+    vim.defer_fn(function()
+      M.send(prompt)
+    end, 100)
   else
-    M.create_input_window()
-    if prompt ~= "" then
-      -- Establecer texto inicial
-      vim.defer_fn(function()
-        if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
-          vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { prompt })
-          if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
-            pcall(function()
-              vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #prompt })
-            end)
-          end
-        end
-      end, 50)
-    end
+    -- Abrir input con vim.ui.input
+    vim.ui.input({
+      prompt = "KiloCode: ",
+      default = prompt,
+    }, function(input)
+      if input and input:gsub("%s", "") ~= "" then
+        table.insert(M.state.history, input)
+        M.state.history_index = #M.state.history + 1
+        M.send(input)
+      end
+    end)
   end
 end
 
@@ -431,16 +258,16 @@ function M.select()
   local items = {}
   for name, p in pairs(config.opts.prompts) do
     if name ~= "ask" then
-      table.insert(items, { name = name, prompt = p })
+      table.insert(items, { name = name, prompt = p.prompt })
     end
   end
-
+  
   table.sort(items, function(a, b) return a.name < b.name end)
-
+  
   vim.ui.select(items, {
-    prompt = config.opts.select.prompt,
+    prompt = "KiloCode: ",
     format_item = function(item)
-      return string.format("%s: %s", item.name, item.prompt.prompt:sub(1, 50))
+      return string.format("%s: %s", item.name, item.prompt:sub(1, 50))
     end,
   }, function(choice)
     if choice then
@@ -449,33 +276,23 @@ function M.select()
   end)
 end
 
--- Operador
+-- Operador (para usar con go, goo)
 function M.operator(type)
-  -- If called without type (from g@), we need to set up the operator
   if not type then
     vim.o.operatorfunc = "v:lua.require'kilocode'.operator"
     return "g@"
   end
   
-  -- Get the selected text
   local selection = vim.fn.getreg('v')
   if selection == "" then
-    -- Fallback: try to get from unnamed register
     selection = vim.fn.getreg('"')
   end
   
   M.ask("", { submit = false })
   
   vim.defer_fn(function()
-    if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
-      local text = "@selection: " .. selection:gsub("\n", " "):sub(1, 100)
-      vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { text })
-      if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
-        pcall(function()
-          vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #text })
-        end)
-      end
-    end
+    local text = "@selection: " .. selection:gsub("\n", " "):sub(1, 100)
+    M.send(text)
   end, 100)
   
   return ""
@@ -485,27 +302,60 @@ end
 function M.command(cmd)
   if cmd == "new" then
     M.close()
-    vim.defer_fn(M.create_terminal_window, 100)
+    vim.defer_fn(M.open, 100)
   elseif cmd == "close" then
     M.close()
   elseif cmd == "toggle" then
     M.toggle()
+  elseif cmd == "open" then
+    M.open()
   else
-    vim.notify("Comando no reconocido: " .. cmd, vim.log.levels.ERROR)
+    vim.notify("Comando: " .. cmd, vim.log.levels.INFO)
   end
 end
 
 -- Statusline
 function M.statusline()
-  return M.state.session_active and "󱐋 KiloCode" or ""
+  return M.state.session_active and "󱐋 Kilo" or ""
 end
 
 -- Setup
 function M.setup(opts)
   if opts then
     vim.g.kilocode_opts = vim.tbl_deep_extend("force", vim.g.kilocode_opts or {}, opts)
+    require("kilocode.config")
   end
-  require("kilocode.config") -- Recargar configuración
+  
+  -- Crear comandos de usuario
+  vim.api.nvim_create_user_command("Kilo", function()
+    M.toggle()
+  end, { desc = "Toggle KiloCode panel" })
+  
+  vim.api.nvim_create_user_command("KiloOpen", function()
+    M.open()
+  end, { desc = "Open KiloCode panel" })
+  
+  vim.api.nvim_create_user_command("KiloClose", function()
+    M.close()
+  end, { desc = "Close KiloCode panel" })
+  
+  vim.api.nvim_create_user_command("KiloAsk", function(opts)
+    M.ask(opts.args, { submit = opts.bang })
+  end, { nargs = "?", bang = true, desc = "Ask KiloCode" })
+  
+  vim.api.nvim_create_user_command("KiloPrompt", function(opts)
+    M.prompt(opts.args)
+  end, { nargs = 1, complete = function()
+    local ok, conf = pcall(require, "kilocode.config")
+    if ok then
+      return vim.tbl_keys(conf.opts.prompts or {})
+    end
+    return {}
+  end, desc = "Execute KiloCode prompt" })
+  
+  vim.api.nvim_create_user_command("KiloSelect", function()
+    M.select()
+  end, { desc = "Select KiloCode prompt" })
 end
 
 return M
