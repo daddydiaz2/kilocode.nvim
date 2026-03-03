@@ -29,9 +29,15 @@ end
 
 function Context:this()
   local mode = vim.fn.mode()
+  -- Check for visual mode (v, V, or Ctrl-V/block)
+  -- Note: In Neovim, Ctrl-V in visual mode returns byte value 22
   if mode == "v" or mode == "V" or mode == "\22" then
     local start_line = vim.fn.line("v")
     local end_line = vim.fn.line(".")
+    -- Ensure valid line range
+    if start_line > end_line then
+      start_line, end_line = end_line, start_line
+    end
     local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
     return table.concat(lines, "\n")
   else
@@ -48,10 +54,12 @@ end
 function Context:selection()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
-  if start_line == 0 or end_line == 0 then
+  -- Validate that we have a valid selection
+  if start_line == 0 or end_line == 0 or start_line > end_line then
     return ""
   end
-  local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
   return table.concat(lines, "\n")
 end
 
@@ -92,7 +100,8 @@ function M.replace_contexts(prompt)
     if result:match(vim.pesc(placeholder)) then
       local ok, value = pcall(fn, ctx)
       if ok and value then
-        result = result:gsub(vim.pesc(placeholder), value)
+        -- Use function replacement to handle special characters in value
+        result = result:gsub(vim.pesc(placeholder), function() return value end)
       end
     end
   end
@@ -171,7 +180,10 @@ function M.create_terminal_window()
   -- Configurar terminal
   local cmd = config.opts.server.cmd
   local args = config.opts.server.args or {}
-  local full_cmd = cmd .. " " .. table.concat(args, " ")
+  local full_cmd = cmd
+  if #args > 0 then
+    full_cmd = full_cmd .. " " .. table.concat(args, " ")
+  end
 
   vim.fn.termopen(full_cmd, {
     env = config.opts.server.env,
@@ -196,7 +208,9 @@ function M.create_terminal_window()
 
   -- Auto-scroll
   if opts.autoscroll then
+    local group = vim.api.nvim_create_augroup("KiloCodeTerminal", { clear = true })
     vim.api.nvim_create_autocmd("TextChanged", {
+      group = group,
       buffer = M.state.terminal_buf,
       callback = function()
         if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
@@ -206,6 +220,7 @@ function M.create_terminal_window()
           end)
         end
       end,
+      desc = "Auto-scroll KiloCode terminal",
     })
   end
 
@@ -256,13 +271,20 @@ function M.create_input_window()
 
   -- Callback de prompt
   vim.fn.prompt_setcallback(M.state.input_buf, function(text)
-    if text and text:gsub("%s", "") ~= "" then
-      table.insert(M.state.history, text)
-      M.state.history_index = #M.state.history + 1
-      M.send(text)
+    local ok, err = pcall(function()
+      if text and text:gsub("%s", "") ~= "" then
+        table.insert(M.state.history, text)
+        M.state.history_index = #M.state.history + 1
+        M.send(text)
+      end
+      -- Limpiar input
+      if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
+        vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, {})
+      end
+    end)
+    if not ok then
+      vim.notify("Error en callback: " .. tostring(err), vim.log.levels.ERROR)
     end
-    -- Limpiar input
-    vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, {})
   end)
 
   -- Keymaps
@@ -270,7 +292,9 @@ function M.create_input_window()
   
   vim.keymap.set({ "i", "n" }, "<Esc>", function()
     M.close_input()
-    vim.api.nvim_set_current_win(M.state.terminal_win)
+    if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
+      vim.api.nvim_set_current_win(M.state.terminal_win)
+    end
   end, buf_opts)
 
   vim.keymap.set("i", "<Tab>", function()
@@ -310,11 +334,21 @@ function M.send(text)
     return
   end
 
+  -- Validar job_id
+  if not M.state.job_id or M.state.job_id == 0 then
+    vim.notify("Terminal de KiloCode no está lista", vim.log.levels.ERROR)
+    return
+  end
+
   -- Procesar contextos
   local processed = M.replace_contexts(text)
 
   -- Enviar a terminal
-  vim.fn.chansend(M.state.job_id, processed .. "\n")
+  local ok, err = pcall(vim.fn.chansend, M.state.job_id, processed .. "\n")
+  if not ok then
+    vim.notify("Error al enviar mensaje: " .. tostring(err), vim.log.levels.ERROR)
+    return
+  end
 
   -- Volver a terminal
   if M.state.terminal_win and vim.api.nvim_win_is_valid(M.state.terminal_win) then
@@ -371,7 +405,11 @@ function M.ask(prompt, opts)
       vim.defer_fn(function()
         if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
           vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { prompt })
-          vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #prompt })
+          if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
+            pcall(function()
+              vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #prompt })
+            end)
+          end
         end
       end, 50)
     end
@@ -413,8 +451,18 @@ end
 
 -- Operador
 function M.operator(type)
-  vim.cmd('normal! "vy')
+  -- If called without type (from g@), we need to set up the operator
+  if not type then
+    vim.o.operatorfunc = "v:lua.require'kilocode'.operator"
+    return "g@"
+  end
+  
+  -- Get the selected text
   local selection = vim.fn.getreg('v')
+  if selection == "" then
+    -- Fallback: try to get from unnamed register
+    selection = vim.fn.getreg('"')
+  end
   
   M.ask("", { submit = false })
   
@@ -422,9 +470,15 @@ function M.operator(type)
     if M.state.input_buf and vim.api.nvim_buf_is_valid(M.state.input_buf) then
       local text = "@selection: " .. selection:gsub("\n", " "):sub(1, 100)
       vim.api.nvim_buf_set_lines(M.state.input_buf, 0, -1, false, { text })
-      vim.api.nvim_win_set_cursor(M.state.input_win, { 1, 12 })
+      if M.state.input_win and vim.api.nvim_win_is_valid(M.state.input_win) then
+        pcall(function()
+          vim.api.nvim_win_set_cursor(M.state.input_win, { 1, #text })
+        end)
+      end
     end
   end, 100)
+  
+  return ""
 end
 
 -- Comando
