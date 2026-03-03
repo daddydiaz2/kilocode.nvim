@@ -1,0 +1,201 @@
+*kilocode.txt*  Integración de KiloCode CLI con Neovim
+*kilocode*
+
+Autor: Daniel Diaz <daddydiaz2@gmail.com>
+Licencia: MIT
+URL: https://github.com/daddydiaz2/kilocode.nvim
+
+================================================================================
+CONTENIDO                                                    *kilocode-contents*
+
+1. Introducción ......................... |kilocode-introduction|
+2. Instalación .......................... |kilocode-installation|
+3. Configuración ........................ |kilocode-configuration|
+4. Comandos ............................. |kilocode-commands|
+5. Keymaps .............................. |kilocode-keymaps|
+6. Contextos ............................ |kilocode-contexts|
+7. Prompts .............................. |kilocode-prompts|
+8. API .................................. |kilocode-api|
+9. Changelog ............................ |kilocode-changelog|
+
+================================================================================
+1. INTRODUCCIÓN                                          *kilocode-introduction*
+
+kilocode.nvim integra KiloCode CLI (https://kilo.ai) con Neovim, permitiendo
+trabajar con asistencia AI directamente desde tu editor.
+
+Características principales:
+- Terminal integrada persistente
+- Contextos inteligentes con placeholders
+- Input separado con historial
+- Prompts predefinidos
+- Operadores Vim-like
+
+Inspirado en opencode.nvim (https://github.com/nickjvandyke/opencode.nvim)
+
+================================================================================
+2. INSTALACIÓN                                           *kilocode-installation*
+
+Requisitos:
+- Neovim >= 0.9.0
+- KiloCode CLI: `npm install -g @kilocode/cli`
+
+Usando lazy.nvim: >lua
+
+  {
+    "daddydiaz2/kilocode.nvim",
+    dependencies = { "nvim-lua/plenary.nvim" },
+    config = function()
+      require("kilocode").setup()
+    end,
+  }
+<
+
+================================================================================
+3. CONFIGURACIÓN                                        *kilocode-configuration*
+
+Configura mediante `vim.g.kilocode_opts`: >lua
+
+  vim.g.kilocode_opts = {
+    server = {
+      cmd = "kilo",
+      args = {},
+      env = {},
+    },
+    terminal = {
+      position = "right",  -- "right", "left", "bottom", "top"
+      width = 80,
+      height = 20,
+      border = "rounded",
+      autoscroll = true,
+    },
+    contexts = {
+      ["@custom"] = function(ctx) return "valor" end,
+    },
+    prompts = {
+      myprompt = { prompt = "Texto", submit = true },
+    },
+  }
+<
+
+================================================================================
+4. COMANDOS                                                  *kilocode-commands*
+
+                                                              *:Kilo*
+:Kilo                       Abre o cierra la terminal de KiloCode.
+
+                                                              *:KiloAsk*
+:KiloAsk [prompt]           Abre el input con un prompt opcional.
+                            Usa `!` para enviar inmediatamente.
+
+                                                              *:KiloPrompt*
+:KiloPrompt {nombre}        Ejecuta un prompt predefinido.
+
+                                                              *:KiloSelect*
+:KiloSelect                 Muestra lista de prompts disponibles.
+
+                                                              *:KiloClose*
+:KiloClose                  Cierra KiloCode.
+
+                                                              *:KiloNew*
+:KiloNew                    Inicia nueva sesión.
+
+================================================================================
+5. KEYMAPS                                                    *kilocode-keymaps*
+
+Keymaps por defecto recomendados:
+
+  <C-a>       Abrir input para preguntar (normal/visual)
+  <C-x>       Seleccionar prompt (normal/visual)
+  <C-.>       Toggle KiloCode (normal/terminal)
+  go          Operador - envía rango a KiloCode
+  goo         Enviar línea actual
+
+En terminal:
+  <Esc>       Modo normal
+  <C-q>       Cerrar
+  q           Cerrar (modo normal)
+
+En input:
+  <CR>        Enviar
+  <Esc>       Cerrar input
+  <Tab>       Cambiar a terminal
+  <Up>        Historial anterior
+  <Down>      Historial siguiente
+
+================================================================================
+6. CONTEXTOS                                                *kilocode-contexts*
+
+Placeholders disponibles:
+
+  @this        Línea actual o selección visual
+  @buffer      Contenido completo del buffer
+  @selection   Selección visual guardada
+  @filename    Nombre del archivo
+  @filepath    Ruta completa del archivo
+  @file        Archivo con contenido formateado
+  @diagnostics Errores y warnings
+
+Uso: Simplemente inclúyelos en tus prompts:
+  `:KiloAsk Explica @this en el contexto de @buffer`
+
+================================================================================
+7. PROMPTS                                                    *kilocode-prompts*
+
+Prompts predefinidos:
+
+  ask         Prompt vacío para input libre
+  explain     Explica el código y su contexto
+  review      Revisa corrección y legibilidad
+  fix         Corrige errores usando diagnósticos
+  document    Agrega documentación
+  test        Genera tests
+  optimize    Optimiza rendimiento
+  refactor    Refactoriza el código
+  implement   Implementa funcionalidad
+
+Uso:
+  `:KiloPrompt explain`
+  `:KiloPrompt fix`
+
+================================================================================
+8. API                                                            *kilocode-api*
+
+setup({opts})                                               *kilocode.setup()*
+  Configura el plugin.
+
+toggle()                                                    *kilocode.toggle()*
+  Abre o cierra la terminal.
+
+ask({prompt}, {opts})                                       *kilocode.ask()*
+  Abre el input con un prompt.
+  Opciones: submit (boolean) - enviar inmediatamente
+
+prompt({name})                                              *kilocode.prompt()*
+  Ejecuta un prompt predefinido.
+
+select()                                                    *kilocode.select()*
+  Muestra selector de prompts.
+
+send({text})                                                *kilocode.send()*
+  Envía texto a KiloCode.
+
+close()                                                     *kilocode.close()*
+  Cierra KiloCode.
+
+command({cmd})                                              *kilocode.command()*
+  Ejecuta comando: "new", "close", "toggle"
+
+operator()                                                  *kilocode.operator()*
+  Operador para rangos.
+
+statusline()                                                *kilocode.statusline()*
+  Retorna string para statusline.
+
+================================================================================
+9. CHANGELOG                                                  *kilocode-changelog*
+
+Ver CHANGELOG.md para historial completo.
+
+================================================================================
+vim:tw=78:ts=8:ft=help:norl:
