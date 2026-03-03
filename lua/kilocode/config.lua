@@ -33,7 +33,6 @@ vim.g.kilocode_opts = vim.g.kilocode_opts
 ---@class kilocode.server.Opts
 ---@field cmd? string Command to run KiloCode CLI (default: "kilo")
 ---@field args? string[] Additional arguments
----@field env? table<string, string> Environment variables
 
 ---@class kilocode.ask.Opts
 ---@field prompt? string Input prompt text
@@ -47,7 +46,6 @@ local defaults = {
   server = {
     cmd = "kilo",
     args = {},
-    env = {},
   },
   -- Modo opencode.nvim: split al costado
   split = "vsplit",  -- "vsplit" = derecha, "split" = abajo

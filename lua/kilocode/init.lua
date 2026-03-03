@@ -130,7 +130,6 @@ function M.open()
   end
   
   vim.fn.termopen(cmd, {
-    env = config.opts.server.env,
     on_exit = function()
       M.state.session_active = false
     end,
